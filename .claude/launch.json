@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "filellm",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set FILELLM_TOKEN=dev&& set FILELLM_NO_OPEN=1&& node server.mjs"],
+      "port": 8777
+    }
+  ]
+}

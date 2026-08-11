@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FileLLM — AI file agent</title>
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗂️</text></svg>">
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">
+      <span class="dot" id="statusDot"></span>
+      FileLLM
+      <small id="brandSub">local file agent</small>
+    </div>
+    <div class="spacer"></div>
+    <span class="pill" id="providerPill">not configured</span>
+    <span class="pill free" id="costPill" hidden>$0</span>
+    <button class="btn" id="btnProve">Prove it's an agent</button>
+    <button class="btn" id="btnSettings">Settings</button>
+    <button class="btn" id="btnNew">New chat</button>
+  </header>
+
+  <section id="chat">
+    <div id="messages">
+      <div class="msg agent">
+        <div class="who">FileLLM</div>
+        <div class="bubble" id="welcome">
+          <p>Ask me about your files in plain English. I'll pick the tools, run them against your actual disk, and show you every step in the panel on the right.</p>
+          <p>I can read inside <code>.docx</code>, <code>.pdf</code>, <code>.xlsx</code> and <code>.pptx</code> files, filter by real modification dates, and find byte-identical duplicates — the things File Explorer search handles badly or not at all.</p>
+          <p><strong>I can't delete or move anything myself.</strong> I can only propose changes; you approve them in the Approvals tab, deletions go to the Recycle Bin, and moves can be undone.</p>
+          <p id="sysLine" class="sys"></p>
+        </div>
+      </div>
+    </div>
+
+    <div id="composer">
+      <div class="wrap">
+        <div class="examples" id="examples"></div>
+        <div class="box">
+          <textarea id="input" rows="1" placeholder="e.g. my storage is too full, what's causing it and what should I delete?"></textarea>
+          <button class="btn primary" id="btnSend">Send</button>
+          <button class="btn danger" id="btnStop" hidden>Stop</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <aside id="rail">
+    <div class="tabs">
+      <button class="tab active" data-panel="trace">Trace</button>
+      <button class="tab" data-panel="proof">Proof</button>
+      <button class="tab" data-panel="approvals">Approvals<span class="badge zero" id="planBadge">0</span></button>
+      <button class="tab" data-panel="undo">Undo</button>
+    </div>
+
+    <div class="panel active" id="panel-trace">
+      <div class="empty">Every model turn, tool call and result appears here as it happens.</div>
+    </div>
+    <div class="panel" id="panel-proof">
+      <div class="empty">The raw HTTP traffic to the model — full request and response bodies, status codes, latency and token counts.</div>
+    </div>
+    <div class="panel" id="panel-approvals">
+      <div class="empty">Proposed file changes land here. Nothing runs until you approve it.</div>
+    </div>
+    <div class="panel" id="panel-undo">
+      <div class="empty">Applied changes can be reversed from here.</div>
+    </div>
+  </aside>
+</div>
+
+<div class="overlay" id="settingsOverlay">
+  <div class="modal">
+    <h2>Settings</h2>
+    <div class="content">
+      <div class="field">
+        <label for="fProvider">Model provider</label>
+        <select id="fProvider"></select>
+        <div class="hint" id="providerHint"></div>
+      </div>
+      <div class="field">
+        <label for="fModel">Model</label>
+        <input id="fModel" placeholder="leave blank for the default" autocomplete="off">
+      </div>
+      <div class="field" id="keyField">
+        <label for="fKey">API key</label>
+        <input id="fKey" type="password" placeholder="paste your key" autocomplete="off">
+        <div class="hint">Stored only in <code>%LOCALAPPDATA%\FileLLM\config.json</code> on this machine. Leave blank to keep the existing key.</div>
+      </div>
+      <div class="field">
+        <label for="fToolMode">Tool-calling mode</label>
+        <select id="fToolMode">
+          <option value="native">Native function calling (recommended)</option>
+          <option value="json">JSON protocol (for small local models)</option>
+        </select>
+        <div class="hint">Switch to the JSON protocol if your local model has no function-calling support. FileLLM falls back to it automatically when a provider rejects tools.</div>
+      </div>
+      <button class="btn" id="btnProbe">Test connection</button>
+      <div id="probeResult"></div>
+    </div>
+    <div class="foot">
+      <button class="btn" id="btnClearCache">Clear scan cache</button>
+      <div style="flex:1"></div>
+      <button class="btn" id="btnCancelSettings">Cancel</button>
+      <button class="btn primary" id="btnSaveSettings">Save</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

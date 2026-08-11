@@ -1,0 +1,14 @@
+{
+  "name": "filellm",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "An AI agent that manages and changes your Windows files from plain-English prompts. Zero dependencies, zero cost.",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "license": "MIT"
+}
