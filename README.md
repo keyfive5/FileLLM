@@ -2,11 +2,11 @@
 
 An AI agent that manages and changes files on Windows from plain-English prompts.
 
-Ask it *"my storage is too full, what's causing it and what should I delete?"* or
-*"find all the documents from 2018 with the word hello in them"* and it works the
-problem the way a person would: run a cheap check first, look at what came back,
-decide what to do next, and keep going until it can answer with real paths and
-real numbers.
+Ask it *"my storage is too full, what's causing it and what should I delete?"*,
+*"find all the documents from 2018 with the word hello in them"*, or *"make a pie
+chart of what's using my disk"* and it works the problem the way a person would:
+run a cheap check first, look at what came back, decide what to do next, and keep
+going until it can answer with real paths and real numbers — or draw you the chart.
 
 **Zero dependencies. Zero cost. Runs entirely on your machine.**
 
@@ -89,7 +89,11 @@ dumps and stale installers — each with a risk rating and a reason.
 then a full SHA-1. Same-name files that differ are not reported; differently
 named identical files are.
 
-### The nine tools
+**Charts.** Ask for a pie chart, donut or bar chart of anything it measured and
+it draws one inline. The chart is real SVG built from the numbers the tools
+returned — hover any segment for the exact value.
+
+### The ten tools
 
 | Tool | What it does |
 | --- | --- |
@@ -101,6 +105,7 @@ named identical files are.
 | `read_file` | Read one file's text to confirm what it is |
 | `list_directory` | Immediate contents of a folder |
 | `find_duplicates` | Byte-identical duplicates, hash-verified |
+| `make_chart` | Draw a pie, donut or bar chart from measured numbers |
 | `propose_changes` | Stage changes for you to approve — **the only mutating tool** |
 
 ---

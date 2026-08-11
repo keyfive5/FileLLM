@@ -4,6 +4,7 @@ import { disk_overview, folder_breakdown, find_junk, find_files } from './scan.m
 import { search_content, read_file, list_directory } from './search.mjs';
 import { find_duplicates } from './dupes.mjs';
 import { propose_changes } from './mutate.mjs';
+import { make_chart } from './chart.mjs';
 
 const S = (type, description, extra = {}) => ({ type, description, ...extra });
 
@@ -138,6 +139,33 @@ export const TOOLS = [
       required: ['path'],
     },
     handler: find_duplicates,
+    mutating: false,
+  },
+  {
+    name: 'make_chart',
+    description:
+      'Draw a pie, donut or bar chart in the chat. Use this whenever the user asks for a chart, graph, pie chart, breakdown or anything visual, and also when a set of numbers you found would simply be clearer as a picture. Gather the real numbers first with folder_breakdown / find_junk / find_files / find_duplicates, then pass them here — never invent values. Sizes may be given as raw bytes (preferred) or strings like "4.2 GB" with format "bytes".',
+    parameters: {
+      type: 'object',
+      properties: {
+        type: S('string', 'Chart style. Pie or donut for shares of a whole; bar for comparing sizes.', { enum: ['pie', 'donut', 'bar'] }),
+        title: S('string', 'Heading shown above the chart, e.g. "What is using space on C:".'),
+        format: S('string', 'How to format the values. Use "bytes" for file sizes.', { enum: ['bytes', 'number', 'percent'] }),
+        slices: S('array', 'The segments, largest first is fine but not required. Max 12 are drawn; the rest are grouped into "Other".', {
+          items: {
+            type: 'object',
+            properties: {
+              label: S('string', 'Segment name, e.g. a folder name. Keep it short.'),
+              value: S('number', 'The measured value. For format "bytes" this is a byte count.'),
+            },
+            required: ['label', 'value'],
+          },
+        }),
+        note: S('string', 'Optional caption shown under the chart.'),
+      },
+      required: ['type', 'slices'],
+    },
+    handler: make_chart,
     mutating: false,
   },
   {

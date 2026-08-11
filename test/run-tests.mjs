@@ -280,6 +280,68 @@ await t('find_duplicates confirms by content, not name', async () => {
   assert.equal(r.data.groups[0].duplicates.length, 1);
 });
 
+console.log('\ncharts');
+await t('builds a pie chart with percentages that sum to 100', async () => {
+  const { make_chart } = await import('../src/tools/chart.mjs');
+  const r = await make_chart({
+    type: 'pie',
+    title: 'Space on C:',
+    format: 'bytes',
+    slices: [
+      { label: 'Videos', value: 50 * 1024 ** 3 },
+      { label: 'Games', value: 30 * 1024 ** 3 },
+      { label: 'Documents', value: 20 * 1024 ** 3 },
+    ],
+  });
+  const c = r.data.chart;
+  assert.equal(c.type, 'pie');
+  assert.equal(c.slices.length, 3);
+  assert.ok(Math.abs(c.slices.reduce((a, b) => a + b.percent, 0) - 100) < 0.001);
+  assert.equal(c.slices[0].label, 'Videos');
+  assert.equal(c.slices[0].display, '50.0 GB');
+  assert.equal(c.slices[0].percent, 50);
+});
+
+await t('accepts sizes written as strings like "4.2 GB"', async () => {
+  const { make_chart, parseValue } = await import('../src/tools/chart.mjs');
+  assert.equal(parseValue('1 GB', 'bytes'), 1024 ** 3);
+  assert.equal(parseValue('4.5mb', 'bytes'), 4.5 * 1024 ** 2);
+  assert.equal(parseValue('1,024', 'number'), 1024);
+  assert.equal(parseValue(2048, 'bytes'), 2048);
+
+  const r = await make_chart({ type: 'donut', format: 'bytes', slices: [{ label: 'a', value: '2 GB' }, { label: 'b', value: '1 GB' }] });
+  assert.equal(r.data.chart.slices[0].display, '2.0 GB');
+  assert.ok(Math.abs(r.data.chart.slices[1].percent - 100 / 3) < 1e-9, `got ${r.data.chart.slices[1].percent}`);
+});
+
+await t('sorts descending and groups the tail into Other', async () => {
+  const { make_chart } = await import('../src/tools/chart.mjs');
+  const slices = Array.from({ length: 20 }, (_, i) => ({ label: `f${i}`, value: i + 1 }));
+  const c = (await make_chart({ type: 'pie', slices })).data.chart;
+  assert.equal(c.slices.length, 12);
+  assert.equal(c.slices[0].label, 'f19');
+  assert.ok(c.slices.at(-1).label.startsWith('Other ('), c.slices.at(-1).label);
+  assert.ok(Math.abs(c.slices.reduce((a, b) => a + b.percent, 0) - 100) < 0.001);
+});
+
+await t('rejects unusable input with a message the model can act on', async () => {
+  const { make_chart } = await import('../src/tools/chart.mjs');
+  await assert.rejects(() => make_chart({ type: 'pie', slices: [] }), /non-empty/);
+  await assert.rejects(() => make_chart({ type: 'sunburst', slices: [{ label: 'a', value: 1 }] }), /Unknown chart type/);
+  await assert.rejects(() => make_chart({ type: 'pie', slices: [{ label: 'a', value: 'lots' }] }), /not a number/);
+  await assert.rejects(() => make_chart({ type: 'pie', slices: [{ label: 'a', value: 0 }] }), /nothing to chart/);
+});
+
+await t('skips bad slices but keeps the good ones', async () => {
+  const { make_chart } = await import('../src/tools/chart.mjs');
+  const r = await make_chart({
+    type: 'bar',
+    slices: [{ label: 'good', value: 5 }, { label: 'bad', value: 'xyz' }, { label: '', value: 3 }],
+  });
+  assert.equal(r.data.chart.slices.length, 1);
+  assert.ok(r.content.includes('skipped'), r.content);
+});
+
 console.log('\nmutation gating');
 await t('propose_changes stages without touching disk', async () => {
   const root = path.join(TMP, 'mutate');

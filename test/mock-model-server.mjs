@@ -52,15 +52,8 @@ const server = http.createServer((req, res) => {
 
     console.log(`  <- turn with ${messages.length} messages, ${payload.tools?.length ?? 0} tools offered`);
 
-    // Second turn: answer from whatever the tool actually returned.
-    if (lastTool) {
-      const hit = /### `([^`]+)`/.exec(lastTool.content || '');
-      const text = hit
-        ? `Found it. The 2018 document containing that code is **${hit[1].split('\\').pop()}**\n\nFull path: \`${hit[1]}\`\n\nI searched inside the documents rather than by filename, and filtered to files modified in 2018, which excluded the other file that mentions the same code.`
-        : `I could not find a matching document. The search returned:\n\n${(lastTool.content || '').slice(0, 300)}`;
-      console.log(`  -> answering: ${hit ? hit[1] : 'not found'}`);
-      return reply(res, { role: 'assistant', content: text });
-    }
+    // Dispatch on the user's request first, then on what came back — checking
+    // "is there a tool result" first would swallow every other scenario.
 
     // Lets you exercise the approval panel without a real model:
     //   "stage a test plan for C:\some\file.txt"
@@ -86,11 +79,79 @@ const server = http.createServer((req, res) => {
       });
     }
 
+    // Lets you exercise the chart renderer without a real model:
+    //   "chart my storage"  -> measures the user folder, then charts it
+    //   "chart <path>"      -> same, but for a folder you name
+    //   "bar/donut chart my storage" -> pick the style
+    const chartCmd = /^(?:(pie|donut|bar) )?chart my storage(?:\s+(?:in|under|for)\s+(.+))?$/i.exec(user.trim());
+    if (chartCmd) {
+      const chartType = (chartCmd[1] || 'pie').toLowerCase();
+      const home = chartCmd[2]?.trim() || process.env.USERPROFILE || process.env.HOME;
+      const content = lastTool?.content || '';
+      // Branch on what the last tool actually returned, not merely on whether one
+      // exists — conversation history can carry a stale result from a previous turn.
+      const haveBreakdown = /^## Breakdown of/m.test(content);
+      const haveChart = /Rendered a \w+ chart/.test(content);
+
+      if (haveChart) {
+        console.log('  -> chart done, answering');
+        return reply(res, { role: 'assistant', content: 'That is the breakdown — the chart above shows the split.' });
+      }
+      if (!haveBreakdown) {
+        console.log('  -> calling folder_breakdown');
+        return reply(res, {
+          role: 'assistant',
+          content: 'Let me measure what is actually there first.',
+          tool_calls: [
+            { id: 'call_mock_fb', type: 'function', function: { name: 'folder_breakdown', arguments: JSON.stringify({ path: home, depth: 1, top: 8 }) } },
+          ],
+        });
+      }
+      // Chart whatever folder_breakdown really returned.
+      const rows = [...content.matchAll(/^\| ([\d.]+ [KMGTP]?B) \| [\d.]+% \| `([^`]+)` \|$/gm)];
+      if (rows.length) {
+        const slices = rows.slice(0, 8).map((m) => ({ label: m[2].split('\\').pop(), value: m[1] }));
+        console.log(`  -> calling make_chart with ${slices.length} real slices`);
+        return reply(res, {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'call_mock_chart',
+              type: 'function',
+              function: {
+                name: 'make_chart',
+                arguments: JSON.stringify({ type: chartType, title: `What is using space in ${home}`, format: 'bytes', slices }),
+              },
+            },
+          ],
+        });
+      }
+      return reply(res, { role: 'assistant', content: 'That is the breakdown — the chart is above.' });
+    }
+
+    // The self-test task. Second turn: answer from whatever search_content found.
+    if (lastTool) {
+      const hit = /### `([^`]+)`/.exec(lastTool.content || '');
+      const text = hit
+        ? `Found it. The 2018 document containing that code is **${hit[1].split('\\').pop()}**\n\nFull path: \`${hit[1]}\`\n\nI searched inside the documents rather than by filename, and filtered to files modified in 2018, which excluded the other file that mentions the same code.`
+        : `I could not find a matching document. The search returned:\n\n${(lastTool.content || '').slice(0, 300)}`;
+      console.log(`  -> answering: ${hit ? hit[1] : 'not found'}`);
+      return reply(res, { role: 'assistant', content: text });
+    }
+
     // First turn: read the task out of the prompt and pick a tool.
     const m = /under (.+?) there is a document last modified in (\d{4}) that contains the reference code (\S+?)\./i.exec(user);
     if (!m) {
       console.log('  -> prompt not recognised, answering directly');
-      return reply(res, { role: 'assistant', content: 'I only know how to run the FileLLM self-test task.' });
+      return reply(res, {
+        role: 'assistant',
+        content:
+          'This is the FileLLM mock model. It understands three prompts:\n\n' +
+          '- the self-test task (use the "Prove it\'s an agent" button)\n' +
+          '- `chart my storage` (optionally `... in <path>`)\n' +
+          '- `stage a test plan for <path>`',
+      });
     }
     const [, dir, year, token] = m;
     console.log(`  -> calling search_content(path=${dir}, query=${token}, modified=${year})`);

@@ -97,5 +97,79 @@ t('does not crash on empty or odd input', () => {
   assert.equal(typeof markdown('| broken | table'), 'string');
 });
 
+// ------------------------------------------------------- chart rendering
+
+const chartStart = src.indexOf('const CHART_COLORS');
+const chartEnd = src.indexOf('function renderChartCard');
+assert.ok(chartStart > 0 && chartEnd > chartStart, 'could not locate the chart section of app.js');
+const chartMod = await import(
+  `data:text/javascript,${encodeURIComponent(
+    `${src.slice(start, end)}\n${src.slice(chartStart, chartEnd)}\n` +
+      `function fmtBytes(n){return n+' B';}\n` +
+      `export { renderPie, renderBar, arcPath, polar, CHART_COLORS };`
+  )}`
+);
+
+t('pie slices produce valid arc paths', () => {
+  const chart = {
+    type: 'pie',
+    title: 'x',
+    format: 'bytes',
+    slices: [
+      { label: 'a', value: 50, display: '50 B', percent: 50 },
+      { label: 'b', value: 30, display: '30 B', percent: 30 },
+      { label: 'c', value: 20, display: '20 B', percent: 20 },
+    ],
+  };
+  const svg = chartMod.renderPie(chart);
+  assert.equal((svg.match(/<path /g) || []).length, 3, svg);
+  assert.ok(svg.includes('<svg'), svg);
+  assert.ok(!/NaN|undefined/.test(svg), `bad numbers in path: ${svg}`);
+  assert.equal((svg.match(/<title>/g) || []).length, 3);
+});
+
+t('a single 100% slice draws a full circle instead of collapsing', () => {
+  // With one slice, start and end angles coincide; a naive arc renders nothing.
+  const chart = { type: 'pie', title: 'x', format: 'number', slices: [{ label: 'only', value: 9, display: '9', percent: 100 }] };
+  const svg = chartMod.renderPie(chart);
+  assert.ok(!/NaN/.test(svg), svg);
+  const d = /d="([^"]+)"/.exec(svg)[1];
+  assert.ok((d.match(/A /g) || []).length >= 2, `expected two arcs for a full circle, got: ${d}`);
+});
+
+t('a donut leaves a hole', () => {
+  const chart = { type: 'donut', title: 'x', format: 'number', slices: [{ label: 'a', value: 1, display: '1', percent: 100 }] };
+  const svg = chartMod.renderPie(chart);
+  assert.ok(!/NaN/.test(svg), svg);
+  assert.ok(svg.includes('total'), 'donut should show a centre total');
+});
+
+t('bar chart scales to the largest value and escapes labels', () => {
+  const chart = {
+    type: 'bar',
+    title: 'x',
+    format: 'bytes',
+    slices: [
+      { label: '<script>', value: 100, display: '100 B', percent: 80 },
+      { label: 'small', value: 10, display: '10 B', percent: 20 },
+    ],
+  };
+  const svg = chartMod.renderBar(chart);
+  assert.equal((svg.match(/<rect /g) || []).length, 2, svg);
+  assert.ok(!svg.includes('<script>'), `label was not escaped: ${svg}`);
+  assert.ok(svg.includes('&lt;script&gt;'), svg);
+  assert.ok(!/NaN|undefined/.test(svg), svg);
+
+  const widths = [...svg.matchAll(/<rect [^>]*width="([\d.]+)"/g)].map((m) => Number(m[1]));
+  assert.ok(widths[0] > widths[1], `bars not scaled: ${widths}`);
+});
+
+t('a zero-value bar still renders a visible sliver', () => {
+  const chart = { type: 'bar', title: 'x', format: 'number', slices: [{ label: 'big', value: 100, display: '100', percent: 100 }, { label: 'zero', value: 0, display: '0', percent: 0 }] };
+  const svg = chartMod.renderBar(chart);
+  const widths = [...svg.matchAll(/<rect [^>]*width="([\d.]+)"/g)].map((m) => Number(m[1]));
+  assert.ok(widths[1] >= 2, `zero bar collapsed to ${widths[1]}`);
+});
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

@@ -168,6 +168,147 @@ function linkifyPaths(container) {
   }
 }
 
+// ------------------------------------------------------------ charts
+
+const CHART_COLORS = [
+  '#5b9dff', '#4ade80', '#fbbf24', '#f87171', '#c084fc', '#22d3ee',
+  '#fb923c', '#a3e635', '#f472b6', '#38bdf8', '#facc15', '#94a3b8',
+];
+
+/** Point on a circle, angle measured clockwise from 12 o'clock. */
+function polar(cx, cy, r, angle) {
+  const a = (angle - 90) * (Math.PI / 180);
+  return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+}
+
+function arcPath(cx, cy, rOuter, rInner, start, end) {
+  // A full circle cannot be drawn with one arc — the start and end points
+  // coincide and the path collapses. Use two half arcs instead.
+  if (end - start >= 359.999) {
+    const [x1, y1] = polar(cx, cy, rOuter, 0);
+    const [x2, y2] = polar(cx, cy, rOuter, 180);
+    const outer = `M ${x1} ${y1} A ${rOuter} ${rOuter} 0 1 1 ${x2} ${y2} A ${rOuter} ${rOuter} 0 1 1 ${x1} ${y1} Z`;
+    if (!rInner) return outer;
+    const [i1, j1] = polar(cx, cy, rInner, 0);
+    const [i2, j2] = polar(cx, cy, rInner, 180);
+    return `${outer} M ${i1} ${j1} A ${rInner} ${rInner} 0 1 0 ${i2} ${j2} A ${rInner} ${rInner} 0 1 0 ${i1} ${j1} Z`;
+  }
+
+  const large = end - start > 180 ? 1 : 0;
+  const [sx, sy] = polar(cx, cy, rOuter, start);
+  const [ex, ey] = polar(cx, cy, rOuter, end);
+  if (!rInner) {
+    return `M ${cx} ${cy} L ${sx} ${sy} A ${rOuter} ${rOuter} 0 ${large} 1 ${ex} ${ey} Z`;
+  }
+  const [isx, isy] = polar(cx, cy, rInner, end);
+  const [iex, iey] = polar(cx, cy, rInner, start);
+  return `M ${sx} ${sy} A ${rOuter} ${rOuter} 0 ${large} 1 ${ex} ${ey} L ${isx} ${isy} A ${rInner} ${rInner} 0 ${large} 0 ${iex} ${iey} Z`;
+}
+
+function renderPie(chart) {
+  const size = 260;
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = 104;
+  const rInner = chart.type === 'donut' ? 58 : 0;
+
+  let angle = 0;
+  const paths = chart.slices
+    .map((s, i) => {
+      const sweep = (s.percent / 100) * 360;
+      const d = arcPath(cx, cy, r, rInner, angle, angle + sweep);
+      angle += sweep;
+      return `<path d="${d}" fill="${CHART_COLORS[i % CHART_COLORS.length]}" stroke="var(--bg-2)" stroke-width="1.5"><title>${escapeHtml(`${s.label}: ${s.display} (${s.percent.toFixed(1)}%)`)}</title></path>`;
+    })
+    .join('');
+
+  const centre =
+    chart.type === 'donut'
+      ? `<text x="${cx}" y="${cy - 4}" text-anchor="middle" class="ch-centre-v">${escapeHtml(formatTotal(chart))}</text>` +
+        `<text x="${cx}" y="${cy + 14}" text-anchor="middle" class="ch-centre-l">total</text>`
+      : '';
+
+  return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" role="img" aria-label="${escapeHtml(chart.title)}">${paths}${centre}</svg>`;
+}
+
+function renderBar(chart) {
+  const rowH = 30;
+  const gap = 8;
+  const labelW = 132;
+  const valueW = 78;
+  const barW = 300;
+  const width = labelW + barW + valueW;
+  const height = chart.slices.length * (rowH + gap);
+  const max = Math.max(...chart.slices.map((s) => s.value)) || 1;
+
+  const rows = chart.slices
+    .map((s, i) => {
+      const y = i * (rowH + gap);
+      const w = Math.max(2, (s.value / max) * barW);
+      const colour = CHART_COLORS[i % CHART_COLORS.length];
+      return (
+        `<text x="${labelW - 10}" y="${y + rowH / 2 + 4}" text-anchor="end" class="ch-label">${escapeHtml(truncate(s.label, 20))}</text>` +
+        `<rect x="${labelW}" y="${y + 4}" width="${w}" height="${rowH - 8}" rx="3" fill="${colour}"><title>${escapeHtml(`${s.label}: ${s.display}`)}</title></rect>` +
+        `<text x="${labelW + w + 8}" y="${y + rowH / 2 + 4}" class="ch-value">${escapeHtml(s.display)}</text>`
+      );
+    })
+    .join('');
+
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" preserveAspectRatio="xMinYMin meet" role="img" aria-label="${escapeHtml(chart.title)}">${rows}</svg>`;
+}
+
+function truncate(s, n) {
+  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+}
+
+function formatTotal(chart) {
+  // The tool reports the total across every slice it was given, including any
+  // it folded into "Other", so prefer it over re-summing what we drew.
+  const t = Number.isFinite(chart.total) ? chart.total : chart.slices.reduce((a, b) => a + b.value, 0);
+  if (chart.format === 'bytes') return fmtBytes(t);
+  if (chart.format === 'percent') return `${t.toFixed(0)}%`;
+  return t >= 1000 ? t.toLocaleString() : String(Math.round(t * 100) / 100);
+}
+
+function renderChartCard(chart) {
+  const card = el('div', 'chart-card');
+  const head = el('div', 'chart-head');
+  head.appendChild(el('div', 'chart-title', chart.title));
+  head.appendChild(el('div', 'chart-total', `total ${formatTotal(chart)}`));
+  card.appendChild(head);
+
+  const body = el('div', `chart-body ${chart.type === 'bar' ? 'is-bar' : ''}`);
+  const figure = el('div', 'chart-figure');
+  figure.innerHTML = chart.type === 'bar' ? renderBar(chart) : renderPie(chart);
+  body.appendChild(figure);
+
+  if (chart.type !== 'bar') {
+    const legend = el('div', 'chart-legend');
+    chart.slices.forEach((s, i) => {
+      const row = el('div', 'chart-legend-row');
+      const sw = el('span', 'sw');
+      sw.style.background = CHART_COLORS[i % CHART_COLORS.length];
+      row.appendChild(sw);
+      row.appendChild(el('span', 'lg-label', truncate(s.label, 26)));
+      row.appendChild(el('span', 'lg-value', `${s.display} · ${s.percent.toFixed(1)}%`));
+      legend.appendChild(row);
+    });
+    body.appendChild(legend);
+  }
+  card.appendChild(body);
+
+  if (chart.note) card.appendChild(el('div', 'chart-note', chart.note));
+  return card;
+}
+
+function addChart(chart) {
+  const wrap = el('div', 'msg agent chart-msg');
+  wrap.appendChild(el('div', 'who', 'FileLLM'));
+  wrap.appendChild(renderChartCard(chart));
+  messages.appendChild(wrap);
+  messages.scrollTop = messages.scrollHeight;
+}
+
 // -------------------------------------------------------------- chat
 
 const messages = $('#messages');
@@ -184,12 +325,55 @@ function addMessage(role, html, cls = '') {
   return bubble;
 }
 
+// A run can take minutes on a local model, so the indicator shows what it is
+// doing and how long it has been doing it — a bare spinner would look hung.
+let thinkingEl = null;
+let thinkingTimer = null;
+let thinkingStarted = 0;
+
+function showThinking(label = 'Thinking') {
+  hideThinking();
+  thinkingStarted = Date.now();
+
+  thinkingEl = el('div', 'msg agent thinking');
+  thinkingEl.appendChild(el('div', 'who', 'FileLLM'));
+  const bubble = el('div', 'thinking-bubble');
+  bubble.innerHTML =
+    '<span class="spinner" aria-hidden="true"></span>' +
+    `<span class="thinking-label">${escapeHtml(label)}</span>` +
+    '<span class="thinking-dots"><i></i><i></i><i></i></span>' +
+    '<span class="thinking-elapsed">0s</span>';
+  thinkingEl.appendChild(bubble);
+  messages.appendChild(thinkingEl);
+  messages.scrollTop = messages.scrollHeight;
+
+  thinkingTimer = setInterval(() => {
+    if (!thinkingEl) return;
+    const s = Math.round((Date.now() - thinkingStarted) / 1000);
+    const text = s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+    thinkingEl.querySelector('.thinking-elapsed').textContent = text;
+  }, 1000);
+}
+
+function updateThinking(label) {
+  if (thinkingEl) thinkingEl.querySelector('.thinking-label').textContent = label;
+}
+
+function hideThinking() {
+  if (thinkingTimer) clearInterval(thinkingTimer);
+  thinkingTimer = null;
+  thinkingEl?.remove();
+  thinkingEl = null;
+}
+
 let activityBox = null;
 function activity(text, detail, state = '') {
   if (!activityBox) {
     activityBox = el('div', 'activity');
     messages.appendChild(activityBox);
   }
+  // Keep the thinking bubble pinned below the newest activity row.
+  if (thinkingEl) messages.appendChild(thinkingEl);
   const row = el('div', `row ${state}`);
   row.appendChild(el('span', 'tick', state === 'done' ? '✓' : state === 'fail' ? '✗' : '▸'));
   const body = el('span');
@@ -220,12 +404,14 @@ async function send(text) {
   activityBox = null;
   clearTrace();
   setBusy(true);
+  showThinking('Thinking');
 
   try {
     await stream('chat', { message: text, conversationId }, handleAgentEvent);
   } catch (err) {
     addMessage('error', `<p>${escapeHtml(err.message)}</p>`, 'error');
   } finally {
+    hideThinking();
     setBusy(false);
     currentRunId = null;
     refreshPlans();
@@ -250,11 +436,13 @@ function handleAgentEvent(ev) {
       const row = activity(`Calling ${ev.name}`, summariseArgs(ev.args));
       pendingRows.set(ev.id, row);
       addTraceStep(ev);
+      updateThinking(`Running ${ev.name}`);
       break;
     }
 
     case 'tool_progress':
       updateTraceProgress(ev);
+      updateThinking(ev.message.length > 70 ? `${ev.message.slice(0, 70)}…` : ev.message);
       break;
 
     case 'tool_result': {
@@ -266,6 +454,8 @@ function handleAgentEvent(ev) {
         if (d) d.textContent = `${ev.ms} ms`;
       }
       completeTraceStep(ev);
+      if (ev.ok && ev.data?.chart) addChart(ev.data.chart);
+      updateThinking('Thinking');
       break;
     }
 
@@ -278,6 +468,7 @@ function handleAgentEvent(ev) {
       break;
 
     case 'final':
+      hideThinking();
       addMessage('agent', markdown(ev.text));
       break;
 
@@ -286,10 +477,12 @@ function handleAgentEvent(ev) {
       break;
 
     case 'error':
+      hideThinking();
       addMessage('error', `<p>${escapeHtml(ev.message)}</p>${ev.detail ? `<pre><code>${escapeHtml(JSON.stringify(ev.detail, null, 2)).slice(0, 1500)}</code></pre>` : ''}`, 'error');
       break;
 
     case 'run_end':
+      hideThinking();
       activity(
         'Done',
         `${ev.steps} model turn${ev.steps === 1 ? '' : 's'} · ${ev.httpCalls} API call${ev.httpCalls === 1 ? '' : 's'} · ${((ev.durationMs || 0) / 1000).toFixed(1)}s · ${(ev.usage?.in || 0) + (ev.usage?.out || 0)} tokens`,
@@ -298,6 +491,7 @@ function handleAgentEvent(ev) {
       break;
 
     case 'cancelled':
+      hideThinking();
       activity('Cancelled', '', 'fail');
       break;
   }
@@ -531,6 +725,7 @@ async function runSelfTest() {
   activityBox = null;
   clearTrace();
   setBusy(true);
+  showThinking('Building the test fixture');
 
   addMessage(
     'agent',
@@ -574,6 +769,7 @@ async function runSelfTest() {
   } catch (err) {
     addMessage('error', `<p>${escapeHtml(err.message)}</p>`, 'error');
   } finally {
+    hideThinking();
     setBusy(false);
   }
 }
@@ -751,6 +947,7 @@ $('#btnClearCache').onclick = async () => {
 
 const EXAMPLES = [
   "my storage is too full — what's causing it and what should I delete?",
+  'make a pie chart of what is using space on C:',
   'find all documents from 2018 containing the word "hello"',
   'what are the 20 biggest files in my Downloads folder?',
   'find duplicate photos in my Pictures folder',
