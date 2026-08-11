@@ -321,6 +321,41 @@ await t('the model has no tool that applies changes', () => {
   assert.equal(TOOL_MAP.has('delete_file'), false);
 });
 
+console.log('\nhistory sanitising');
+await t('drops tool calls that never got results', async () => {
+  const { sanitizeHistory } = await import('../src/agent.mjs');
+  const history = [
+    { role: 'user', content: 'hi' },
+    { role: 'assistant', content: '', toolCalls: [{ id: 'a', name: 'x', args: {} }, { id: 'b', name: 'y', args: {} }] },
+    { role: 'tool', toolCallId: 'a', name: 'x', content: 'done' },
+  ];
+  const out = sanitizeHistory(history);
+  const assistant = out.find((m) => m.role === 'assistant');
+  assert.equal(assistant.toolCalls.length, 1, 'unanswered call was kept');
+  assert.equal(assistant.toolCalls[0].id, 'a');
+});
+
+await t('drops an assistant turn where nothing was answered', async () => {
+  const { sanitizeHistory } = await import('../src/agent.mjs');
+  const out = sanitizeHistory([
+    { role: 'user', content: 'hi' },
+    { role: 'assistant', content: '', toolCalls: [{ id: 'z', name: 'x', args: {} }] },
+  ]);
+  assert.equal(out.length, 1, `expected the dangling turn to be removed, got ${JSON.stringify(out)}`);
+  assert.equal(out[0].role, 'user');
+});
+
+await t('keeps a fully answered turn untouched', async () => {
+  const { sanitizeHistory } = await import('../src/agent.mjs');
+  const history = [
+    { role: 'user', content: 'hi' },
+    { role: 'assistant', content: '', toolCalls: [{ id: 'a', name: 'x', args: {} }] },
+    { role: 'tool', toolCallId: 'a', name: 'x', content: 'ok' },
+    { role: 'assistant', content: 'answer' },
+  ];
+  assert.deepEqual(sanitizeHistory(history), history);
+});
+
 console.log('\nself-test fixture');
 await t('fixture builds a real docx haystack with a trap', async () => {
   const fx = await buildFixture();

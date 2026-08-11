@@ -71,8 +71,10 @@ If the honest answer is "there is nothing large enough to matter here", say that
  * @param {object} opts.cfg          provider config
  * @param {(event:object)=>void} opts.emit
  * @param {AbortSignal} opts.signal
+ * @param {Function} [opts.chatFn]  override the model call; used by tests to
+ *   exercise the loop deterministically without a live model.
  */
-export async function runAgent({ history = [], userMessage, cfg, emit, signal }) {
+export async function runAgent({ history = [], userMessage, cfg, emit, signal, chatFn = chat }) {
   const runId = shortId('run_');
   const started = Date.now();
 
@@ -115,7 +117,7 @@ export async function runAgent({ history = [], userMessage, cfg, emit, signal })
 
       let res;
       try {
-        res = await chat({
+        res = await chatFn({
           cfg: { ...cfg, toolMode },
           messages,
           tools: toolSchemas(),
@@ -233,8 +235,39 @@ export async function runAgent({ history = [], userMessage, cfg, emit, signal })
   emit({ type: 'run_end', runId, durationMs: trace.durationMs, steps: step, usage: trace.usage, httpCalls: trace.http.length });
 
   // Strip the system prompt back out — it is rebuilt fresh each turn.
-  const newHistory = messages.filter((m) => m.role !== 'system');
+  const newHistory = sanitizeHistory(messages.filter((m) => m.role !== 'system'));
   return { runId, finalText, trace, history: newHistory };
+}
+
+/**
+ * Drop assistant turns whose tool calls never got results.
+ *
+ * A cancelled or errored run can leave `assistant(tool_calls)` as the last
+ * message with no matching `tool` replies. OpenAI-compatible APIs reject that
+ * on the following request, so one interrupted turn would poison the whole
+ * conversation. Remove the unanswered calls instead.
+ */
+export function sanitizeHistory(messages) {
+  const answered = new Set();
+  for (const m of messages) if (m.role === 'tool' && m.toolCallId) answered.add(m.toolCallId);
+
+  const out = [];
+  for (const m of messages) {
+    if (m.role !== 'assistant' || !m.toolCalls?.length) {
+      out.push(m);
+      continue;
+    }
+    const kept = m.toolCalls.filter((tc) => answered.has(tc.id));
+    if (kept.length === m.toolCalls.length) {
+      out.push(m);
+    } else if (kept.length) {
+      out.push({ ...m, toolCalls: kept });
+    } else if (m.content) {
+      // Keep the reasoning text, drop the dangling calls.
+      out.push({ role: 'assistant', content: m.content });
+    }
+  }
+  return out;
 }
 
 export { MAX_STEPS, buildSystemPrompt };

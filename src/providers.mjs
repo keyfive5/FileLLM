@@ -1,3 +1,7 @@
+import http from 'node:http';
+import https from 'node:https';
+import zlib from 'node:zlib';
+
 // Model adapters.
 //
 // Everything is normalised to one internal shape so the agent loop never knows
@@ -141,7 +145,9 @@ export async function probe(cfg) {
 
 // ------------------------------------------------------- shared plumbing
 
-async function post(url, { headers, body, onHttp, signal, provider, timeoutMs = 300000, onSlow }) {
+const DEFAULT_TIMEOUT_MS = 600000;
+
+async function post(url, { headers, body, onHttp, signal, provider, timeoutMs = DEFAULT_TIMEOUT_MS, onSlow }) {
   const started = Date.now();
   const controller = new AbortController();
 
@@ -164,15 +170,8 @@ async function post(url, { headers, body, onHttp, signal, provider, timeoutMs = 
   }
 
   let res;
-  let text;
   try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...headers },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    text = await res.text();
+    res = await httpPost(url, { 'content-type': 'application/json', ...headers }, JSON.stringify(body), controller.signal);
   } catch (err) {
     clean();
     const record = {
@@ -188,6 +187,7 @@ async function post(url, { headers, body, onHttp, signal, provider, timeoutMs = 
   }
   clean();
 
+  const text = res.text;
   let json = null;
   try {
     json = JSON.parse(text);
@@ -209,6 +209,68 @@ async function post(url, { headers, body, onHttp, signal, provider, timeoutMs = 
   }
   if (!json) throw new ProviderError(`${provider} returned a non-JSON response`, { body: text.slice(0, 500), provider });
   return json;
+}
+
+/**
+ * POST over node:http rather than global fetch.
+ *
+ * fetch() is undici underneath, which enforces a 300s headersTimeout that
+ * cannot be raised without a dispatcher — and a small local model on CPU can
+ * legitimately need longer than that for one turn. node:http imposes no such
+ * deadline, so the only limit is the one we set ourselves. Also keeps FileLLM
+ * dependency-free.
+ */
+function httpPost(url, headers, payload, signal) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const data = Buffer.from(payload, 'utf8');
+
+    const req = mod.request(
+      {
+        protocol: u.protocol,
+        hostname: u.hostname,
+        port: u.port || (u.protocol === 'https:' ? 443 : 80),
+        path: `${u.pathname}${u.search}`,
+        method: 'POST',
+        headers: { ...headers, 'content-length': data.length, 'accept-encoding': 'gzip, deflate, br' },
+      },
+      (res) => {
+        const chunks = [];
+        const encoding = String(res.headers['content-encoding'] || '').toLowerCase();
+        const sink =
+          encoding === 'gzip' ? zlib.createGunzip()
+          : encoding === 'deflate' ? zlib.createInflate()
+          : encoding === 'br' ? zlib.createBrotliDecompress()
+          : null;
+
+        const source = sink ? res.pipe(sink) : res;
+        source.on('data', (c) => chunks.push(c));
+        source.on('end', () =>
+          resolve({
+            status: res.statusCode,
+            ok: res.statusCode >= 200 && res.statusCode < 300,
+            text: Buffer.concat(chunks).toString('utf8'),
+          })
+        );
+        source.on('error', reject);
+        res.on('error', reject);
+      }
+    );
+
+    req.on('error', reject);
+    req.setTimeout(0); // no idle timeout; the caller owns the deadline
+
+    const onAbort = () => {
+      req.destroy(signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason ?? 'aborted')));
+    };
+    if (signal) {
+      if (signal.aborted) return onAbort();
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    req.end(data);
+  });
 }
 
 function describeNetworkError(err, url, provider) {
@@ -266,7 +328,7 @@ async function callOpenAI({ cfg, spec, messages, tools, onHttp, signal, onSlow }
     headers['X-Title'] = 'FileLLM';
   }
 
-  const json = await post(url, { headers, body, onHttp, signal, onSlow, provider: cfg.provider });
+  const json = await post(url, { headers, body, onHttp, signal, onSlow, timeoutMs: cfg.timeoutMs, provider: cfg.provider });
   const choice = json.choices?.[0];
   const msg = choice?.message || {};
 
@@ -336,6 +398,7 @@ async function callGemini({ cfg, spec, messages, tools, onHttp, signal, onSlow }
     onHttp,
     signal,
     onSlow,
+    timeoutMs: cfg.timeoutMs,
     provider: 'gemini',
   });
 
@@ -431,6 +494,7 @@ async function callAnthropic({ cfg, spec, messages, tools, onHttp, signal, onSlo
     onHttp,
     signal,
     onSlow,
+    timeoutMs: cfg.timeoutMs,
     provider: 'anthropic',
   });
 

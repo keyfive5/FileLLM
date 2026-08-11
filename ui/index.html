@@ -97,6 +97,11 @@
         </select>
         <div class="hint">Switch to the JSON protocol if your local model has no function-calling support. FileLLM falls back to it automatically when a provider rejects tools.</div>
       </div>
+      <div class="field">
+        <label for="fTimeout">Per-step timeout (seconds)</label>
+        <input id="fTimeout" type="number" min="0" step="30" placeholder="0 = automatic">
+        <div class="hint">How long to wait for one model turn. Leave at 0 for the default: 30 minutes for local models, 3 minutes for hosted ones. Raise it if a local model on CPU needs longer.</div>
+      </div>
       <button class="btn" id="btnProbe">Test connection</button>
       <div id="probeResult"></div>
     </div>

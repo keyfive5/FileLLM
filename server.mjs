@@ -33,7 +33,7 @@ const activeRuns = new Map(); // runId -> AbortController
 
 // ------------------------------------------------------------- config
 
-const DEFAULT_CONFIG = { provider: 'gemini', model: '', apiKey: '', baseUrl: '', temperature: 0.2, toolMode: 'native' };
+const DEFAULT_CONFIG = { provider: 'gemini', model: '', apiKey: '', baseUrl: '', temperature: 0.2, toolMode: 'native', timeoutSeconds: 0 };
 
 async function loadConfig() {
   try {
@@ -55,10 +55,15 @@ async function saveConfig(cfg) {
 
 function resolveConfig(cfg) {
   const spec = PROVIDERS[cfg.provider] || PROVIDERS.gemini;
+  // Local models on CPU are legitimately slow, so give them a much longer
+  // budget than a hosted API that should answer in seconds.
+  const isLocal = cfg.provider === 'ollama' || cfg.provider === 'lmstudio';
+  const seconds = Number(cfg.timeoutSeconds) > 0 ? Number(cfg.timeoutSeconds) : isLocal ? 1800 : 180;
   return {
     ...cfg,
     model: cfg.model || spec.defaultModel,
     baseUrl: cfg.baseUrl || spec.baseUrl,
+    timeoutMs: seconds * 1000,
   };
 }
 

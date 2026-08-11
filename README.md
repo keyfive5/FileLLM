@@ -39,10 +39,15 @@ Hosting cost is zero because there is no hosting: the server runs on
 `127.0.0.1` and stops when you close the window.
 
 > **Offline speed note.** Local models are genuinely free but only as fast as
-> your hardware. On a CPU-only machine a 4B model takes roughly a minute per
-> reasoning step, so a multi-step question can take several minutes. On a
-> machine with a GPU it's fine. If local inference feels slow, the Gemini and
-> Groq free tiers are both fast and still cost nothing.
+> your hardware. Measured on a CPU-only Windows box with `qwen3:4b`: a bare
+> prompt answered in ~13 s, and a single tool-calling turn with all nine tool
+> schemas attached (~2,500 prompt tokens) took 33–85 s. It picks the right tool
+> with valid arguments — it's just slow, and a multi-step question multiplies
+> that. With a GPU it's fine. If local inference drags, the Gemini and Groq free
+> tiers are fast and still cost nothing.
+>
+> FileLLM allows 30 minutes per step for local models (3 minutes for hosted
+> ones); change it under Settings → Per-step timeout.
 
 ---
 
@@ -133,13 +138,35 @@ fails step 3; a model answering from memory fails step 1.
 
 ## Tests
 
+Double-click **`RUN-TESTS.bat`**, or:
+
 ```bash
-node test/run-tests.mjs
+npm test
 ```
 
-32 assertions covering the ZIP reader/writer round-trip, Office and PDF text
-extraction, encoding detection, date parsing, the safety guards, the walker's
-junction handling, index rollups, each search tool, and the mutation gating.
+| Suite | Covers |
+| --- | --- |
+| `test/run-tests.mjs` | 35 assertions: ZIP read/write round-trip, Office + PDF extraction, encoding detection, date parsing, safety guards, junction handling, index rollups, every search tool, mutation gating, history repair |
+| `test/markdown.test.mjs` | The renderer — HTML escaping, fenced code, tables, Windows paths, quoted snippets |
+| `test/loop.test.mjs` | The **real agent loop** against a scripted model: tool dispatch, results fed back across turns, tool errors, unknown tools, the step limit, cancellation, and that `propose_changes` reaches the approval queue without touching disk |
+| `test/integration-mutate.mjs` | The **real destructive path** — actually recycles and moves files in a scratch folder, then asserts the recycled file is genuinely in the Recycle Bin, that collisions don't overwrite, and that undo restores |
+
+`test/loop.test.mjs` deliberately separates two questions that are easy to
+conflate: *does the loop work* (deterministic, no model needed) versus *can a
+given model drive it* (`test/probe-agentturn.mjs`, against whatever you have
+configured).
+
+### Testing the UI without a model
+
+```bash
+node test/mock-model-server.mjs
+```
+
+Starts a tiny OpenAI-compatible server on port 8899 that solves the self-test
+task. Point FileLLM at it (provider `lmstudio`, base URL
+`http://127.0.0.1:8899/v1`) to exercise the whole pipeline — agent loop, tools,
+SSE stream, trace and proof panels — instantly and with no API key. Useful for
+telling whether a problem is in FileLLM or in the model you configured.
 
 ---
 
@@ -162,6 +189,12 @@ The index is what makes it feel fast: one pass over a tree records every path,
 size and mtime to `%LOCALAPPDATA%\FileLLM\index`, so follow-up questions filter
 an array instead of re-crawling the disk. Cache lifetime is 10 minutes, and
 Settings has a Clear button.
+
+Model calls go over `node:http` rather than the global `fetch`. That isn't
+gratuitous: `fetch` is undici underneath, which enforces a 300-second header
+timeout that can't be raised without a custom dispatcher — and a small local
+model on CPU can legitimately need longer than that for one turn. Using
+`node:http` means the only deadline is the one you set.
 
 Models that lack native function calling (common for small local ones) are
 automatically switched to a plain-text JSON tool protocol, so FileLLM still

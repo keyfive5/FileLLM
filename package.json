@@ -8,7 +8,9 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "test": "node test/run-tests.mjs && node test/markdown.test.mjs && node test/loop.test.mjs",
+    "test:all": "npm test && node test/integration-mutate.mjs"
   },
   "license": "MIT"
 }
