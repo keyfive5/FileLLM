@@ -38,13 +38,33 @@ On first launch it asks which model to use:
 Hosting cost is zero because there is no hosting: the server runs on
 `127.0.0.1` and stops when you close the window.
 
-> **Offline speed note.** Local models are genuinely free but only as fast as
-> your hardware. Measured on a CPU-only Windows box with `qwen3:4b`: a bare
-> prompt answered in ~13 s, and a single tool-calling turn with all nine tool
-> schemas attached (~2,500 prompt tokens) took 33–85 s. It picks the right tool
-> with valid arguments — it's just slow, and a multi-step question multiplies
-> that. With a GPU it's fine. If local inference drags, the Gemini and Groq free
-> tiers are fast and still cost nothing.
+> **Offline speed note — read this before choosing Ollama.** Local models are
+> genuinely free but only as fast as your hardware, and on a CPU-only machine
+> that is *slow*. Measured with `qwen3:4b` on a CPU-only Windows box:
+>
+> | Request | Time |
+> | --- | --- |
+> | Bare prompt, no tools | ~13 s |
+> | One tool-calling turn, short system prompt, 9 tool schemas | 33–85 s |
+> | One tool-calling turn, FileLLM's full system prompt | **457 s** |
+>
+> Correctness was never the problem. Given the self-test task in plain English,
+> that 457-second turn came back with exactly the right call — and narrowed the
+> extension list on its own initiative, which nothing in the prompt told it to do:
+>
+> ```json
+> {"name": "search_content",
+>  "args": {"query": "ZPHR-…", "modified": "2018", "path": "C:\\Temp\\case_1",
+>           "extensions": ["docx", "pdf", "txt", "xlsx", "pptx"]}}
+> ```
+>
+> It is purely throughput, and a multi-step question multiplies it. With a GPU
+> this is a non-issue. (That 457 s turn is also why model calls do not use
+> `fetch` — see the architecture note below. On `fetch` this exact request died
+> at 302 s.)
+>
+> **If you have no GPU, use the Gemini or Groq free tier.** Both are fast, both
+> cost nothing, and Gemini needs no credit card.
 >
 > FileLLM allows 30 minutes per step for local models (3 minutes for hosted
 > ones); change it under Settings → Per-step timeout.
@@ -192,9 +212,11 @@ Settings has a Clear button.
 
 Model calls go over `node:http` rather than the global `fetch`. That isn't
 gratuitous: `fetch` is undici underneath, which enforces a 300-second header
-timeout that can't be raised without a custom dispatcher — and a small local
-model on CPU can legitimately need longer than that for one turn. Using
-`node:http` means the only deadline is the one you set.
+timeout that can't be raised without a custom dispatcher. A `qwen3:4b` turn on
+a CPU-only box measured 457 s here — so on `fetch` it failed at ~302 s with an
+unhelpful `fetch failed`, even with a 900-second abort configured. On
+`node:http` the same request returns 200 and the only deadline is the one you
+set.
 
 Models that lack native function calling (common for small local ones) are
 automatically switched to a plain-text JSON tool protocol, so FileLLM still
